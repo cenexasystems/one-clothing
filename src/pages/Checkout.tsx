@@ -24,6 +24,7 @@ const toProductId = (value: string | number): string | null => {
 interface BookedOrderSnapshot {
   requestId: string
   orderId: string
+  invoiceNo: string
   name: string
   phone: string
   address: string
@@ -99,7 +100,7 @@ export default function Checkout() {
     return encodeURIComponent(buildProfessionalWhatsAppMessage({
       customerName: snapshot.name,
       phone: snapshot.phone,
-      invoiceNumber: snapshot.requestId,
+      invoiceNumber: snapshot.invoiceNo,
       paymentMode: 'Online Request',
       items: cartItems.map((i) => ({
         name: lang === 'ta' && i.nameTa ? i.nameTa : i.name,
@@ -177,6 +178,7 @@ export default function Checkout() {
       const snapshot: BookedOrderSnapshot = {
         requestId:     created.orderId,
         orderId:       created.orderId,
+        invoiceNo:     created.invoiceNo,
         name:          form.name.trim(),
         phone:         phoneDigits,  // 10-digit display form
         address:       form.address.trim(),
@@ -209,7 +211,7 @@ export default function Checkout() {
       buildProfessionalWhatsAppMessage({
         customerName: booked.name,
         phone: booked.phone,
-        invoiceNumber: booked.requestId,
+        invoiceNumber: booked.invoiceNo,
         paymentMode: 'Online Request',
         items: items.map((i) => ({
           name: lang === 'ta' && i.nameTa ? i.nameTa : i.name,

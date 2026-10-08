@@ -904,7 +904,7 @@ export default function Dashboard() {
       const mappedOrders = (oRes.data || []).map(r => toDashboardOrder(r as Record<string, unknown>))
       setCats((cRes.data || []) as Category[])
       setOrders(mappedOrders)
-      setSearchResults(mappedOrders.filter(o => normalizeOrderType(o.order_type) !== 'online_request').slice(0, 100))
+      setSearchResults(mappedOrders.slice(0, 100))
       setCoupons((couponRes.data || []) as DashboardCoupon[])
       setExpenses(expList || [])
 
@@ -1343,7 +1343,7 @@ export default function Dashboard() {
     return count
   }, [billTypeFilter, datePreset, search])
 
-  // Order search - POS bills only (online_request excluded)
+  // Order history includes both POS bills and online requests.
   const runSearch = async (e?: FormEvent, overrideDates?: { dateFrom?: string; dateTo?: string }) => {
     e?.preventDefault()
     setSearchLoading(true)
@@ -1358,7 +1358,6 @@ export default function Dashboard() {
 
       let q = supabase.from('orders')
         .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, total_gst, gst_amount, payment_mode, payment_method, split_details, remarks, reference_number')
-        .neq('order_type', 'online_request')
         .order('created_at', { ascending: false })
         .limit(hasQuery ? 1000 : 500)
 
@@ -1466,7 +1465,6 @@ export default function Dashboard() {
       // Fallback: if query returned no results from Supabase, search in pre-loaded orders
       if (results.length === 0 && orders.length > 0) {
         const localMatches = orders.filter(o => {
-          if (normalizeOrderType(o.order_type) === 'online_request') return false
           if (billTypeFilter === 'manual' && getBillType(o) !== 'manual') return false
           if (billTypeFilter === 'offline' && getBillType(o) !== 'offline') return false
           if (billTypeFilter === 'online' && getBillType(o) !== 'online') return false
@@ -3288,7 +3286,7 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#10B981]">{l('Billing history', 'பில் வரலாறு')}</p>
-                <h2 className="mt-1 text-xl font-black text-[#111111]">{l('Order Management', 'ஆர்டர் மேலாண்மை')} <span className="text-[11px] font-semibold text-[#374151]">({l('POS Bills only', 'POS பில்கள் மட்டுமே')})</span></h2>
+                <h2 className="mt-1 text-xl font-black text-[#111111]">{l('Order Management', 'ஆர்டர் மேலாண்மை')} <span className="text-[11px] font-semibold text-[#374151]">({l('Orders and POS bills', 'ஆர்டர்கள் மற்றும் POS பில்கள்')})</span></h2>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -3546,8 +3544,8 @@ export default function Dashboard() {
               </div>
               <div className="space-y-3 md:hidden">
                 {filteredSearchResults.slice(0, 50).map(o => {
-                  const billTypeLabel = normalizeOrderType(o.order_type) === 'manual_sale' ? 'MANUAL' : normalizeOrderMode(o.order_mode) === 'online' ? 'ONLINE' : 'OFFLINE'
-                  const billTypeClass = normalizeOrderType(o.order_type) === 'manual_sale' ? 'bg-gray-50 text-gray-700' : normalizeOrderMode(o.order_mode) === 'online' ? 'bg-gray-50 text-gray-700' : 'bg-orange-50 text-orange-700'
+                  const billTypeLabel = normalizeOrderType(o.order_type) === 'online_request' ? 'REQUEST' : normalizeOrderType(o.order_type) === 'manual_sale' ? 'MANUAL' : normalizeOrderMode(o.order_mode) === 'online' ? 'ONLINE' : 'OFFLINE'
+                  const billTypeClass = normalizeOrderType(o.order_type) === 'online_request' ? 'bg-amber-50 text-amber-800' : normalizeOrderType(o.order_type) === 'manual_sale' ? 'bg-gray-50 text-gray-700' : normalizeOrderMode(o.order_mode) === 'online' ? 'bg-gray-50 text-gray-700' : 'bg-orange-50 text-orange-700'
                   return (
                     <div key={o.id} className="rounded-2xl border border-[#DDD2BE]/60 bg-[#FBFAF6] p-3 sm:p-4 space-y-3">
                       <div className="flex items-start justify-between gap-3">
@@ -3652,8 +3650,8 @@ export default function Dashboard() {
                   </thead>
                   <tbody className="divide-y divide-[#DDD2BE]/30 bg-white">
                     {filteredSearchResults.slice(0, 50).map(o => {
-                      const billTypeLabel = normalizeOrderType(o.order_type) === 'manual_sale' ? 'MANUAL' : normalizeOrderMode(o.order_mode) === 'online' ? 'ONLINE' : 'OFFLINE'
-                      const billTypeClass = normalizeOrderType(o.order_type) === 'manual_sale' ? 'bg-gray-50 text-gray-700' : normalizeOrderMode(o.order_mode) === 'online' ? 'bg-gray-50 text-gray-700' : 'bg-orange-50 text-orange-700'
+                      const billTypeLabel = normalizeOrderType(o.order_type) === 'online_request' ? 'REQUEST' : normalizeOrderType(o.order_type) === 'manual_sale' ? 'MANUAL' : normalizeOrderMode(o.order_mode) === 'online' ? 'ONLINE' : 'OFFLINE'
+                      const billTypeClass = normalizeOrderType(o.order_type) === 'online_request' ? 'bg-amber-50 text-amber-800' : normalizeOrderType(o.order_type) === 'manual_sale' ? 'bg-gray-50 text-gray-700' : normalizeOrderMode(o.order_mode) === 'online' ? 'bg-gray-50 text-gray-700' : 'bg-orange-50 text-orange-700'
                       return (
                         <React.Fragment key={o.id}>
                         <tr key={o.id} className="hover:bg-[#FAF7F2] text-center">
