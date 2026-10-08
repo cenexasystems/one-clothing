@@ -1,0 +1,37 @@
+{
+  "name": "The One Clothing Retail POS",
+  "short_name": "The One",
+  "description": "The One Clothing - Retail billing, barcode inventory, catalog, order, receipt, and invoice administration.",
+  "theme_color": "#111111",
+  "background_color": "#111111",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/the-one-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/the-one-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/the-one-icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/the-one-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
