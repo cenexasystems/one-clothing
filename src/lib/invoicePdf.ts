@@ -20,6 +20,8 @@ export type InvoicePdfData = {
   gstAmount?: number
   couponCode?: string | null
   paymentMode?: string
+  /** Advance-order settlement lines shown under the total */
+  advance?: { depositPaid: number; balancePaid: number; remaining: number }
 }
 
 // jsPDF's built-in Helvetica font does not include the ₹ Unicode glyph (U+20B9).
@@ -151,6 +153,22 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   doc.setTextColor(primaryColor)
   doc.text('TOTAL', 143, y + 6, { align: 'right' })
   doc.text(money(data.total), right - 4, y + 6, { align: 'right' })
+  if (data.advance) {
+    y += 16
+    const advanceRows: Array<[string, number, string]> = [
+      ['Deposit Paid', data.advance.depositPaid, ink],
+      ['Final Balance Paid', data.advance.balancePaid, ink],
+      ['Remaining Balance', data.advance.remaining, primaryColor],
+    ]
+    doc.setFontSize(9)
+    advanceRows.forEach(([label, value, color], index) => {
+      doc.setFont('helvetica', index === 2 ? 'bold' : 'normal')
+      doc.setTextColor(color)
+      doc.text(label, 143, y, { align: 'right' })
+      doc.text(money(value), right - 4, y, { align: 'right' })
+      y += 7
+    })
+  }
 
   y = 275
   doc.setDrawColor('#F1EBE0')

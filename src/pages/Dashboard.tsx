@@ -79,7 +79,7 @@ type Category = { id: string | number; name_en: string; name_ta: string; is_acti
 type DashboardOrder = {
   id: string; invoice_no: string; customer_name: string; phone: string; address: string
   created_at: string; total: number; status: string; order_mode: string; order_type: string; user_id: string | null; items: unknown
-  coupon_code: string; discount_amount: number; manual_discount_amount: number; delivery_charge: number
+  coupon_code: string; discount_amount: number; manual_discount_amount: number; delivery_charge: number; shipping?: number
   total_gst: number; payment_mode: string; payment_method?: string; split_details?: unknown; invoice_pdf_url: string; remarks?: string; reference_number?: string
 }
 type DashboardOrderItem = { order_id: string; product_id?: string | null; variant_id?: string | null; product_name: string; category?: string; quantity: number; line_total: number; is_manual?: boolean | null }
@@ -128,6 +128,21 @@ const getOrderTotal = (order: { total: unknown; items: unknown; shipping?: unkno
     - toNumber(order.discount_amount, 0)
     - toNumber(order.manual_discount_amount, 0)
   )
+}
+
+// Orders saved through different RPC versions keep the delivery fee in either delivery_charge or shipping
+const getOrderDelivery = (o: { delivery_charge?: number; shipping?: number }): number =>
+  (o.delivery_charge || 0) > 0 ? (o.delivery_charge || 0) : (o.shipping || 0)
+// Coupon + manual discount, so the History table never hides a discount that reduced the total
+const getOrderDiscount = (o: { discount_amount?: number; manual_discount_amount?: number }): number =>
+  (o.discount_amount || 0) + (o.manual_discount_amount || 0)
+const getOrderSubtotal = (o: { items: unknown; total: number; delivery_charge?: number; shipping?: number; total_gst?: number; discount_amount?: number; manual_discount_amount?: number }): number => {
+  const fromItems = parseOrderItems(o.items).reduce((sum, item) => {
+    const lineTotal = toNumber(item.line_total ?? item.lineTotal, 0)
+    return sum + (lineTotal > 0 ? lineTotal : toNumber(item.base_price ?? item.basePrice ?? item.price, 0) * Math.max(1, toNumber(item.quantity, 1)))
+  }, 0)
+  if (fromItems > 0) return fromItems
+  return Math.max(0, o.total - getOrderDelivery(o) - (o.total_gst || 0) + getOrderDiscount(o))
 }
 
 const toLocalDateKey = (value: string | Date): string => {
@@ -379,6 +394,7 @@ export default function Dashboard() {
     discount_amount: toNumber(row.discount_amount, 0),
     manual_discount_amount: toNumber(row.manual_discount_amount, 0),
     delivery_charge: toNumber(row.delivery_charge, 0),
+    shipping: toNumber(row.shipping, 0),
     total_gst: toNumber(row.total_gst ?? row.gst_amount, 0),
     payment_mode: String(row.payment_mode || row.payment_method || ''),
     split_details: row.split_details,
@@ -418,6 +434,7 @@ export default function Dashboard() {
       discount_amount: 0,
       manual_discount_amount: 0,
       delivery_charge: 0,
+      shipping: 0,
       total_gst: 0,
       payment_mode: advance.final_payment_method || '',
       payment_method: advance.final_payment_method || '',
@@ -891,7 +908,7 @@ export default function Dashboard() {
       const [cRes, oRes, couponRes, expList] = await Promise.all([
         supabase.from('categories').select('id, name_en, name_ta, is_active, sort_order').order('sort_order'),
         supabase.from('orders')
-          .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, user_id, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, total_gst, gst_amount, payment_mode, payment_method, split_details, remarks, reference_number')
+          .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, user_id, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, shipping, total_gst, gst_amount, payment_mode, payment_method, split_details, remarks, reference_number')
           .order('created_at', { ascending: false })
           .limit(1000),
         supabase.from('coupons')
@@ -1075,8 +1092,8 @@ export default function Dashboard() {
         lineTotal: item.line_total,
       })),
       subtotal,
-      couponDiscount: order.discount_amount,
-      shipping: order.delivery_charge,
+      couponDiscount: getOrderDiscount(order),
+      shipping: getOrderDelivery(order),
       total: order.total,
     })
     return { items, subtotal, message, fileName: `Invoice-${order.invoice_no || order.id}.pdf` }
@@ -1086,7 +1103,7 @@ export default function Dashboard() {
   const handlePrintReceipt = (order: DashboardOrder) => {
     const preview = getOrderWhatsAppPreview(order)
     if (!preview) { alert('This order has no invoice details available.'); return }
-    const subtotal = order.total - (order.delivery_charge || 0) + (order.discount_amount || 0)
+    const subtotal = getOrderSubtotal(order)
 
     printThermalReceipt({
       invoiceNo: order.invoice_no || order.id,
@@ -1110,8 +1127,9 @@ export default function Dashboard() {
         line_total: item.line_total || 0
       })),
       subtotal,
-      shipping: order.delivery_charge || 0,
+      shipping: getOrderDelivery(order),
       couponDiscount: order.discount_amount || 0,
+      manualDiscount: order.manual_discount_amount || 0,
       totalGst: order.total_gst || 0,
       total: order.total
     })
@@ -1142,7 +1160,8 @@ export default function Dashboard() {
       address: order.address,
       items: preview.items as unknown as Array<Record<string, unknown>>,
       subtotal: preview.subtotal,
-      shipping: order.delivery_charge,
+      shipping: getOrderDelivery(order),
+      couponCode: order.coupon_code || null,
       discountAmount: order.discount_amount,
       manualDiscountAmount: order.manual_discount_amount,
       gstAmount: order.total_gst,
@@ -1357,7 +1376,7 @@ export default function Dashboard() {
       const effectiveDateTo = overrideDates !== undefined ? (overrideDates.dateTo ?? '') : search.dateTo
 
       let q = supabase.from('orders')
-        .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, total_gst, gst_amount, payment_mode, payment_method, split_details, remarks, reference_number')
+        .select('id, invoice_no, customer_name, phone, address, created_at, total, status, order_mode, order_type, items, coupon_code, discount_amount, manual_discount_amount, delivery_charge, shipping, total_gst, gst_amount, payment_mode, payment_method, split_details, remarks, reference_number')
         .order('created_at', { ascending: false })
         .limit(hasQuery ? 1000 : 500)
 
@@ -3570,15 +3589,15 @@ export default function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Coupon</p>
-                          <p className="font-semibold text-[#374151] break-words">{o.coupon_code || '—'}</p>
+                          <p className="font-semibold text-[#374151] break-words">{o.coupon_code || (o.manual_discount_amount > 0 ? 'Manual' : '—')}</p>
                         </div>
                         <div className="min-w-0">
                           <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Discount</p>
-                          <p className="font-semibold text-emerald-700">{o.discount_amount > 0 ? `-${formatCurrency(o.discount_amount)}` : '—'}</p>
+                          <p className="font-semibold text-emerald-700">{getOrderDiscount(o) > 0 ? `-${formatCurrency(getOrderDiscount(o))}` : '—'}</p>
                         </div>
                         <div className="min-w-0">
                           <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Delivery</p>
-                          <p className="font-semibold text-[#111111]">{o.delivery_charge > 0 ? formatCurrency(o.delivery_charge) : '—'}</p>
+                          <p className="font-semibold text-[#111111]">{getOrderDelivery(o) > 0 ? formatCurrency(getOrderDelivery(o)) : 'Free'}</p>
                         </div>
                         <div className="min-w-0 col-span-2">
                           <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Payment</p>
@@ -3660,13 +3679,13 @@ export default function Dashboard() {
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{formatPhoneDisplay(o.phone)}</td>
                           <td className="px-2 py-3"><span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase ${billTypeClass}`}>{billTypeLabel}</span></td>
                           <td className="px-2 py-3 text-[11px]">
-                            {o.coupon_code ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{o.coupon_code}</span> : <span className="text-[#A8946F]">—</span>}
+                            {o.coupon_code ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{o.coupon_code}</span> : o.manual_discount_amount > 0 ? <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Manual</span> : <span className="text-[#A8946F]">—</span>}
                           </td>
                           <td className="px-2 py-3 text-[11px]">
-                            {o.discount_amount > 0 ? <span className="font-bold text-emerald-700">-{formatCurrency(o.discount_amount)}</span> : <span className="text-[#A8946F]">—</span>}
+                            {getOrderDiscount(o) > 0 ? <span className="font-bold text-emerald-700">-{formatCurrency(getOrderDiscount(o))}</span> : <span className="text-[#A8946F]">—</span>}
                           </td>
                           <td className="px-2 py-3 text-[11px]">
-                            {o.delivery_charge > 0 ? <span className="font-bold text-[#111111]">{formatCurrency(o.delivery_charge)}</span> : <span className="text-[#A8946F]">—</span>}
+                            {getOrderDelivery(o) > 0 ? <span className="font-bold text-[#111111]">{formatCurrency(getOrderDelivery(o))}</span> : <span className="text-[#A8946F]">Free</span>}
                           </td>
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] font-bold text-[#111111]">{formatCurrency(getOrderTotal(o))}</td>
                           <td className="whitespace-nowrap px-2 py-3 text-[11px] text-[#374151]">{new Date(o.created_at).toLocaleDateString('en-IN')}</td>
@@ -3744,6 +3763,21 @@ export default function Dashboard() {
                                   <p className="text-[10px] font-black uppercase text-[#A8946F] tracking-wider mb-1">Address</p>
                                   <p className="font-semibold text-[#374151] break-words">{o.address || '—'}</p>
                                 </div>
+                              </div>
+                              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-[12px]">
+                                {[
+                                  ['Subtotal', formatCurrency(getOrderSubtotal(o))],
+                                  ['Coupon', o.coupon_code ? `${o.coupon_code} (-${formatCurrency(o.discount_amount)})` : '—'],
+                                  ['Manual Discount', o.manual_discount_amount > 0 ? `-${formatCurrency(o.manual_discount_amount)}` : '—'],
+                                  ['Delivery', getOrderDelivery(o) > 0 ? formatCurrency(getOrderDelivery(o)) : 'Free'],
+                                  ['GST', o.total_gst > 0 ? formatCurrency(o.total_gst) : '—'],
+                                  ['Total', formatCurrency(getOrderTotal(o))],
+                                ].map(([k, v]) => (
+                                  <div key={k} className="rounded-lg border border-[#DDD2BE]/60 bg-white px-3 py-2">
+                                    <p className="text-[10px] font-black uppercase text-[#A8946F] tracking-wider mb-1">{k}</p>
+                                    <p className="font-bold text-[#111111] break-words">{v}</p>
+                                  </div>
+                                ))}
                               </div>
                             </td>
                           </tr>
@@ -4748,8 +4782,8 @@ export default function Dashboard() {
                     address={invoicePreviewOrder.address}
                     items={preview.items as unknown as import('../components/Invoice').InvoiceItem[]}
                     subtotal={preview.subtotal}
-                    shipping={invoicePreviewOrder.delivery_charge}
-                    deliveryCharge={invoicePreviewOrder.delivery_charge}
+                    shipping={getOrderDelivery(invoicePreviewOrder)}
+                    deliveryCharge={getOrderDelivery(invoicePreviewOrder)}
                     discountAmount={invoicePreviewOrder.discount_amount}
                     manualDiscountAmount={invoicePreviewOrder.manual_discount_amount}
                     gstAmount={invoicePreviewOrder.total_gst}

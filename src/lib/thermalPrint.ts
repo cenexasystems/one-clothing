@@ -21,6 +21,10 @@ export interface ThermalReceiptData {
   manualDiscount?: number
   totalGst?: number
   total: number
+  paymentMode?: string
+  /** Advance-order settlement lines shown under the total */
+  advance?: { depositPaid: number; balancePaid: number; remaining: number }
+  couponCode?: string | null
   storeName?: string
   storePhone?: string
   storeAddress?: string
@@ -95,6 +99,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
         <div class="border-bottom border-top" style="font-size: 11px;">
           <div>Inv: #${formatInvoiceNo(data.invoiceNo)}</div>
           <div>Date: ${dateStr}</div>
+          ${data.paymentMode ? `<div>Payment: ${data.paymentMode}</div>` : ''}
           ${data.customerName ? `<div>Name: ${data.customerName}</div>` : ''}
           ${data.phone ? `<div>Tel: ${formatCustomerPhone(data.phone)}</div>` : ''}
         </div>
@@ -132,7 +137,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
 
         <div class="border-bottom" style="font-size: 12px;">
           <table style="width: 100%;">
-            ${data.subtotal !== data.total ? `
+            ${data.subtotal !== data.total || data.advance ? `
               <tr>
                 <td class="text-left">Subtotal</td>
                 <td class="text-right">${formatCurrency(data.subtotal)}</td>
@@ -140,7 +145,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
             ` : ''}
             ${(data.couponDiscount || 0) > 0 ? `
               <tr>
-                <td class="text-left">Coupon</td>
+                <td class="text-left">Coupon${data.couponCode ? ` (${data.couponCode})` : ''}</td>
                 <td class="text-right">-${formatCurrency(data.couponDiscount || 0)}</td>
               </tr>
             ` : ''}
@@ -156,16 +161,28 @@ export function printThermalReceipt(data: ThermalReceiptData) {
                 <td class="text-right">+${formatCurrency(data.totalGst || 0)}</td>
               </tr>
             ` : ''}
-            ${data.shipping > 0 ? `
-              <tr>
-                <td class="text-left">Delivery</td>
-                <td class="text-right">${formatCurrency(data.shipping)}</td>
-              </tr>
-            ` : ''}
+            <tr>
+              <td class="text-left">Delivery</td>
+              <td class="text-right">${data.shipping > 0 ? formatCurrency(data.shipping) : 'Free'}</td>
+            </tr>
             <tr class="font-bold" style="font-size: 14px;">
               <td class="text-left">Total</td>
               <td class="text-right">${formatCurrency(data.total)}</td>
             </tr>
+            ${data.advance ? `
+              <tr>
+                <td class="text-left font-bold">Deposit Paid</td>
+                <td class="text-right">${formatCurrency(data.advance.depositPaid)}</td>
+              </tr>
+              <tr>
+                <td class="text-left font-bold">Balance Paid</td>
+                <td class="text-right">${formatCurrency(data.advance.balancePaid)}</td>
+              </tr>
+              <tr class="font-bold">
+                <td class="text-left">Remaining Balance</td>
+                <td class="text-right">${formatCurrency(data.advance.remaining)}</td>
+              </tr>
+            ` : ''}
           </table>
         </div>
 

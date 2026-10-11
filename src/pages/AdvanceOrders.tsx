@@ -8,7 +8,7 @@ import { invoicePdfFile } from '../lib/invoicePdf'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import { buildAdvanceDepositWhatsAppMessage, buildProfessionalWhatsAppMessage, publicInvoiceUrl } from '../lib/whatsappMessage'
 import { formatPhoneDisplay, toWhatsAppUrl } from '../lib/phone'
-import { advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
+import { advanceFinancials, advancePaymentText, advanceReceiptPdf, downloadFile, printAdvanceReceipt } from '../lib/advanceReceipt'
 import { useAdminAuthStore, useProductStore } from '../store/store'
 import {
   addAdvanceEvent, completeAdvanceOrder, createAdvanceOrder, getAdvanceOrderHistory, listAdvanceOrders, updateAdvanceStatus, deleteAdvanceOrder,
@@ -198,7 +198,7 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
         remarksWithCoupon,
         paymentForm.method === 'split' ? splitInputToDetails(finalSplit) : undefined
       )
-      const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: finalAmount, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: paymentForm.method, split_details: result.split_details }
+      const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: 0, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: paymentForm.method, split_details: result.split_details }
       setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setFinalSplit(emptySplitInput()); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue.`)
 
       // Redirect to WhatsApp with final invoice URL + Instagram + Feedback form
@@ -207,8 +207,10 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
   }
 
   const productRows = (order: AdvanceOrder) => order.products.length ? order.products : [{ name: order.product_name, quantity: 1, base_price: order.total_amount, line_total: order.total_amount, unit: 'piece', unit_type: 'unit' }]
-  const invoiceFile = (order: AdvanceOrder) => invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, items: productRows(order), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: order.final_payment_method || 'Paid' })
-  const printFinal = (order: AdvanceOrder) => printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: order.total_amount, shipping: 0, total: order.total_amount })
+  const advanceSettlement = (order: AdvanceOrder) => { const fin = advanceFinancials(order); return { depositPaid: fin.deposit, balancePaid: fin.balancePaid, remaining: fin.remaining } }
+  const invoiceFile = (order: AdvanceOrder) => invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, items: productRows(order), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) })
+  const printFinal = (order: AdvanceOrder) => printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) })
+  const printOrder = (order: AdvanceOrder) => order.status === 'completed' ? printFinal(order) : printAdvanceReceipt(order)
   
   const whatsappDepositReceipt = (order: AdvanceOrder) => {
     const message = buildAdvanceDepositWhatsAppMessage({
@@ -350,7 +352,7 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
                       {/* Print Receipt / Invoice */}
                       <button
                         type="button"
-                        onClick={() => order.status === 'completed' ? printFinal(order) : printAdvanceReceipt(order)}
+                        onClick={() => printOrder(order)}
                         className="w-8 h-8 rounded-lg bg-amber-50 hover:bg-amber-100 text-[#7A6A4F] flex items-center justify-center transition-colors cursor-pointer shrink-0"
                         title={order.status === 'completed' ? "Print Final Receipt" : "Print Advance Receipt"}
                       >
@@ -507,9 +509,6 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
                 ['Address', selected.address || '-'],
                 ['Product', selected.product_name],
                 ['Category', selected.category || '-'],
-                ['Total', formatCurrency(selected.total_amount)],
-                ['Deposit Paid', formatCurrency(selected.deposit_amount)],
-                ['Remaining Balance', formatCurrency(selected.remaining_balance)],
                 ['Delivery Date', new Date(`${selected.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN')],
                 ['Created Date', new Date(selected.created_at).toLocaleDateString('en-IN')],
                 ['Created Time', new Date(selected.created_at).toLocaleTimeString('en-IN')],
@@ -524,6 +523,37 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
                 </div>
               ))}
             </div>
+
+            {(() => {
+              const fin = advanceFinancials(selected)
+              const cell = (label: string, value: string, highlight = false) => (
+                <div className={`rounded-xl border p-3 ${highlight ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
+                  <p className={`text-[10px] font-black uppercase ${highlight ? 'text-amber-700' : 'text-gray-500'}`}>{label}</p>
+                  <p className="mt-1 break-words text-sm font-black text-gray-900">{value}</p>
+                </div>
+              )
+              return (
+                <div className="rounded-2xl border border-[#C9B79C] bg-[#FBFAF6] p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-[#111111]">Financial Breakdown &amp; Balance</p>
+                    <span className={`rounded-md border px-2 py-0.5 text-[10px] font-black uppercase ${fin.settled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>{fin.settled ? 'Fully Settled' : 'Balance Pending'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {cell('Subtotal', formatCurrency(fin.subtotal))}
+                    {cell('Delivery Charges', fin.delivery > 0 ? formatCurrency(fin.delivery) : 'Free (₹0)')}
+                    {cell('Discount', formatCurrency(fin.discount))}
+                    {cell('CGST', formatCurrency(fin.cgst))}
+                    {cell('SGST', formatCurrency(fin.sgst))}
+                    {cell('Total Amount', formatCurrency(fin.total), true)}
+                  </div>
+                  <div className="mt-3 space-y-2 rounded-xl border border-amber-200 bg-white p-3 text-sm">
+                    <div className="flex justify-between"><span className="font-semibold text-gray-600">Deposit Paid:</span><span className="font-black text-blue-700">{formatCurrency(fin.deposit)}</span></div>
+                    {fin.completed && <div className="flex justify-between"><span className="font-semibold text-gray-600">Final Balance Paid:</span><span className="font-black text-emerald-700">{formatCurrency(fin.balancePaid)}</span></div>}
+                    <div className="flex justify-between border-t border-gray-100 pt-2"><span className="font-black text-emerald-800">REMAINING BALANCE:</span><span className={`font-black ${fin.settled ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(fin.remaining)}{fin.settled ? ' (Fully Settled)' : ''}</span></div>
+                  </div>
+                </div>
+              )
+            })()}
 
             {selected.remarks && (
               <div className="rounded-xl border border-gray-200 bg-[#FAF7F2] p-3.5">
@@ -598,6 +628,14 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
           {/* Sticky Drawer Footer */}
           <div className="shrink-0 px-6 py-4 border-t border-gray-200 bg-slate-50 flex items-center justify-between gap-3">
             <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => printOrder(selected)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 bg-white text-xs font-bold text-gray-700 hover:bg-gray-100 cursor-pointer transition shadow-xs"
+                title={selected.status === 'completed' ? 'Print Final Receipt' : 'Print Advance Receipt'}
+              >
+                <Printer size={14} /> Print
+              </button>
               <button
                 type="button"
                 onClick={() => downloadFile(selected.status === 'completed' ? invoiceFile(selected) : advanceReceiptPdf(selected))}
