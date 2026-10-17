@@ -2,6 +2,7 @@ import { BRAND_ADDRESS, BRAND_EMAIL, BRAND_INSTAGRAM, BRAND_PRIMARY_PHONE_DISPLA
 import { LOGO_BASE64 } from './logoBase64'
 import { formatCurrency, formatInvoiceNo } from './retail'
 import { printHtmlDocument } from './printHtml'
+import { splitGst } from './payments'
 
 export interface ThermalReceiptData {
   invoiceNo: string
@@ -51,6 +52,7 @@ export function printThermalReceipt(data: ThermalReceiptData) {
       return trimmed
     }
 
+    const gstParts = splitGst(data.totalGst || 0)
     const html = `
       <!DOCTYPE html>
       <html lang="en" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" spellcheck="false">
@@ -157,8 +159,12 @@ export function printThermalReceipt(data: ThermalReceiptData) {
             ` : ''}
             ${(data.totalGst || 0) > 0 ? `
               <tr>
-                <td class="text-left">GST</td>
-                <td class="text-right">+${formatCurrency(data.totalGst || 0)}</td>
+                <td class="text-left">CGST</td>
+                <td class="text-right">+${formatCurrency(gstParts.cgst)}</td>
+              </tr>
+              <tr>
+                <td class="text-left">SGST</td>
+                <td class="text-right">+${formatCurrency(gstParts.sgst)}</td>
               </tr>
             ` : ''}
             <tr>

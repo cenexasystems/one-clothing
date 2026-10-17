@@ -6,7 +6,7 @@ import {
   MessageCircle, ChevronDown, Eye, FileText, Printer, MoreVertical, X, Layers, Receipt,
   SlidersHorizontal, Tag, Ticket, Percent, CheckCircle2, Info, Sparkles, Banknote, QrCode, CreditCard, Gift,
 } from 'lucide-react'
-import { paymentBreakdown, formatPaymentLabel } from '../lib/payments'
+import { paymentBreakdown, formatPaymentLabel, splitGst } from '../lib/payments'
 
 // Custom Malaysian Ringgit icon — replaces the generic dollar-sign icon
 const RMIcon = ({ size = 16, className = '' }: { size?: number; className?: string }) => (
@@ -1029,7 +1029,6 @@ export default function Dashboard() {
         phone: editOrderForm.phone.trim(),
         address: editOrderForm.address.trim(),
         remarks: editOrderForm.remarks.trim(),
-        reference_number: editOrderForm.reference_number.trim(),
         status: editOrderForm.status,
         updated_at: new Date().toISOString(),
       }
@@ -2335,9 +2334,6 @@ export default function Dashboard() {
                                       {Boolean(order.remarks) && (
                                         <div className="w-full mt-1 border-t border-gray-50 pt-2"><span className="font-black text-[#374151]">Remarks: </span><span className="font-bold text-[#111111]">{order.remarks}</span></div>
                                       )}
-                                      {Boolean(order.reference_number) && (
-                                        <div className="w-full mt-1 border-t border-gray-50 pt-2"><span className="font-black text-[#374151]">Ref Number: </span><span className="font-bold text-[#111111]">{order.reference_number}</span></div>
-                                      )}
                                     </div>
 
                                     {/* Items table */}
@@ -3603,14 +3599,8 @@ export default function Dashboard() {
                           <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Payment</p>
                           <p className="font-semibold text-[#374151] break-words">{formatPaymentLabel(o.payment_mode || o.payment_method, o.split_details) || '—'}</p>
                         </div>
-                        {(Boolean(o.reference_number) || Boolean(o.remarks) || Boolean(o.address)) && (
+                        {(Boolean(o.remarks) || Boolean(o.address)) && (
                           <div className="col-span-2 mt-1 grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-[#DDD2BE] pt-3">
-                            {Boolean(o.reference_number) && (
-                              <div className="min-w-0">
-                                <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Ref #</p>
-                                <p className="font-semibold text-[#111111] break-words">{o.reference_number}</p>
-                              </div>
-                            )}
                             {Boolean(o.remarks) && (
                               <div className="min-w-0">
                                 <p className="text-[#A8946F] uppercase text-[10px] sm:text-[11px] font-black leading-tight">Remarks</p>
@@ -3746,11 +3736,7 @@ export default function Dashboard() {
                                   <span>{l('Edit Order Details', 'விவரங்களை திருத்து')}</span>
                                 </button>
                               </div>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-[12px]">
-                                <div>
-                                  <p className="text-[10px] font-black uppercase text-[#A8946F] tracking-wider mb-1">Reference No</p>
-                                  <p className="font-semibold text-[#111111] break-words">{o.reference_number || '—'}</p>
-                                </div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-[12px]">
                                 <div>
                                   <p className="text-[10px] font-black uppercase text-[#A8946F] tracking-wider mb-1">Remarks</p>
                                   <p className="font-semibold text-[#374151] break-words">{o.remarks || '—'}</p>
@@ -3764,13 +3750,14 @@ export default function Dashboard() {
                                   <p className="font-semibold text-[#374151] break-words">{o.address || '—'}</p>
                                 </div>
                               </div>
-                              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-[12px]">
+                              <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-[12px]">
                                 {[
                                   ['Subtotal', formatCurrency(getOrderSubtotal(o))],
                                   ['Coupon', o.coupon_code ? `${o.coupon_code} (-${formatCurrency(o.discount_amount)})` : '—'],
                                   ['Manual Discount', o.manual_discount_amount > 0 ? `-${formatCurrency(o.manual_discount_amount)}` : '—'],
                                   ['Delivery', getOrderDelivery(o) > 0 ? formatCurrency(getOrderDelivery(o)) : 'Free'],
-                                  ['GST', o.total_gst > 0 ? formatCurrency(o.total_gst) : '—'],
+                                  ['CGST', o.total_gst > 0 ? formatCurrency(splitGst(o.total_gst).cgst) : '—'],
+                                  ['SGST', o.total_gst > 0 ? formatCurrency(splitGst(o.total_gst).sgst) : '—'],
                                   ['Total', formatCurrency(getOrderTotal(o))],
                                 ].map(([k, v]) => (
                                   <div key={k} className="rounded-lg border border-[#DDD2BE]/60 bg-white px-3 py-2">
@@ -4851,18 +4838,6 @@ export default function Dashboard() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-wider text-gray-500 block mb-1">
-                    {l('Reference Number', 'குறிப்பு எண்')}
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs sm:text-[13px] font-semibold text-gray-900 focus:outline-none focus:border-[#C9B79C] focus:ring-1 focus:ring-[#C9B79C]"
-                    value={editOrderForm.reference_number}
-                    onChange={e => setEditOrderForm(f => ({ ...f, reference_number: e.target.value }))}
-                    placeholder="e.g. REF-1002"
-                  />
-                </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-wider text-gray-500 block mb-1">
                     {l('Status', 'நிலை')}

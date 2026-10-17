@@ -2,8 +2,8 @@ import { jsPDF } from 'jspdf'
 import { BRAND_ADDRESS, BRAND_PHONE_DISPLAY, BRAND_PRIMARY_PHONE_DISPLAY } from './brand'
 import { LOGO_BASE64 } from './logoBase64'
 import { formatCurrency } from './retail'
-import { formatPaymentLabel } from './payments'
-import type { AdvanceOrder } from '../services/advanceOrderService'
+import { formatPaymentLabel, normalizePaymentMode, round2, splitGst } from './payments'
+import type { AdvanceOrder, AdvancePayment } from '../services/advanceOrderService'
 import { formatPhoneDisplay } from './phone'
 import { printHtmlDocument } from './printHtml'
 
@@ -26,17 +26,35 @@ export type AdvanceFinancials = {
 /** Single source for the financial breakdown shown in the drawer, receipt and PDF. */
 export function advanceFinancials(order: AdvanceOrder): AdvanceFinancials {
   const completed = order.status === 'completed' || Boolean(order.invoice_number)
-  const total = order.total_amount
-  const balancePaid = completed ? Math.max(0, total - order.deposit_amount) : 0
+  const subtotal = order.total_amount
+  const discount = completed ? round2(order.breakdown?.discount || 0) : 0
+  const delivery = completed ? round2(order.breakdown?.delivery || 0) : 0
+  const gst = completed ? round2(order.breakdown?.gst || 0) : 0
+  const { cgst, sgst } = splitGst(gst)
+  const total = completed ? Math.max(0, round2(subtotal - discount + delivery + gst)) : subtotal
+  const balancePaid = completed ? Math.max(0, round2(total - order.deposit_amount)) : 0
   const remaining = completed ? 0 : Math.max(0, order.remaining_balance)
-  return { subtotal: total, delivery: 0, discount: 0, cgst: 0, sgst: 0, total, deposit: order.deposit_amount, balancePaid, remaining, settled: remaining < 0.005, completed }
+  return { subtotal, delivery, discount, cgst, sgst, total, deposit: order.deposit_amount, balancePaid, remaining, settled: remaining < 0.005, completed }
+}
+
+const paymentLine = (payment: AdvancePayment) => {
+  const kind = payment.payment_type === 'deposit' ? 'Deposit' : 'Final balance'
+  const label = formatPaymentLabel(payment.payment_method, payment.split_details) || String(payment.payment_method || '').toUpperCase()
+  // Split labels already carry the per-channel amounts
+  return normalizePaymentMode(payment.payment_method) === 'split' ? `${kind}: ${label}` : `${kind}: ${label} ${formatCurrency(Number(payment.amount))}`
+}
+
+/** One line per payment received (deposit, then final balance), including split breakdowns. */
+export function advancePaymentLines(order: AdvanceOrder): string[] {
+  if (order.payments && order.payments.length) return order.payments.map(paymentLine)
+  if (!order.final_payment_method) return ['Cash']
+  if (order.final_payment_method === 'upi') return ['UPI / QR']
+  if (order.final_payment_method === 'split') return [formatPaymentLabel('split', order.split_details)]
+  return [order.final_payment_method.toUpperCase()]
 }
 
 export function advancePaymentText(order: AdvanceOrder): string {
-  if (!order.final_payment_method) return 'Cash'
-  if (order.final_payment_method === 'upi') return 'UPI / QR'
-  if (order.final_payment_method === 'split') return formatPaymentLabel('split', order.split_details)
-  return order.final_payment_method.toUpperCase()
+  return advancePaymentLines(order).join(' | ')
 }
 
 export function advanceReceiptPdf(order: AdvanceOrder) {
@@ -56,29 +74,33 @@ export function advanceReceiptPdf(order: AdvanceOrder) {
   let y = 66
   rows.forEach(([label, value]) => { doc.setFont('helvetica', 'bold'); doc.setTextColor('#6B7280'); doc.text(label.toUpperCase(), 16, y); doc.setFont('helvetica', 'normal'); doc.setTextColor('#1F1F1F'); doc.text(String(value), 64, y, { maxWidth: 126 }); y += 10 })
   const fin = advanceFinancials(order)
-  const money = [
-    ['Subtotal', fin.subtotal, false], ['Delivery charges', fin.delivery, false], ['Discount', fin.discount, false],
+  const money: Array<readonly [string, number, boolean]> = [
+    ['Subtotal', fin.subtotal, false], ['Delivery charges', fin.delivery, false], ['Discount', -fin.discount, false],
     ['CGST', fin.cgst, false], ['SGST', fin.sgst, false], ['Total order amount', fin.total, true],
     ['Deposit paid', fin.deposit, false], ...(fin.completed ? [['Final balance paid', fin.balancePaid, false] as const] : []),
     ['Remaining balance', fin.remaining, true],
-  ] as ReadonlyArray<readonly [string, number, boolean]>
+  ]
   y += 4; const boxH = 10 + money.length * 8
   doc.setFillColor('#FBFAF6'); doc.roundedRect(16, y, 178, boxH, 3, 3, 'F')
   money.forEach(([label, value, strong], index) => {
     const rowY = y + 9 + index * 8
     doc.setFont('helvetica', strong ? 'bold' : 'normal'); doc.setTextColor(strong ? '#7A6A4F' : '#374151')
     doc.text(label, 22, rowY)
-    doc.text(label === 'Delivery charges' && value === 0 ? 'Free' : pdfMoney(value), 188, rowY, { align: 'right' })
+    doc.text(label === 'Delivery charges' && value === 0 ? 'Free' : value < 0 ? `-${pdfMoney(-value)}` : pdfMoney(value), 188, rowY, { align: 'right' })
   })
-  doc.setFont('helvetica', 'normal'); doc.setTextColor('#374151'); doc.text(`Payment: ${advancePaymentText(order)}`, 16, y + boxH + 8)
+  // Payment lines (deposit + final, with split breakdown); Helvetica has no rupee glyph
+  const paymentLines = advancePaymentLines(order).flatMap(line => doc.splitTextToSize(`Payment - ${line}`.replace(/₹\s*/g, 'Rs. '), 178) as string[])
+  doc.setFont('helvetica', 'normal'); doc.setTextColor('#374151'); doc.setFontSize(9)
+  paymentLines.forEach((line, index) => doc.text(line, 16, y + boxH + 8 + index * 5))
+  const footY = y + boxH + 8 + paymentLines.length * 5 + 7
   doc.setFont('helvetica', 'bold'); doc.setTextColor('#b45309'); doc.setFontSize(9)
-  doc.text(fin.completed ? `Fully settled - Invoice ${order.invoice_number || ''}` : 'This receipt records an advance payment only. It is not a final invoice.', 105, y + boxH + 20, { align: 'center' })
+  doc.text(fin.completed ? `Fully settled - Invoice ${order.invoice_number || ''}` : 'This receipt records an advance payment only. It is not a final invoice.', 105, footY, { align: 'center' })
   return new File([doc.output('blob')], `Advance-Receipt-${order.deposit_id}.pdf`, { type: 'application/pdf' })
 }
 
 export function printAdvanceReceipt(order: AdvanceOrder) {
   try {
-    const depositPayment = advancePaymentText(order)
+    const paymentRows = advancePaymentLines(order).map(line => `<div class="r"><span class="label">Payment</span><span>${esc(line)}</span></div>`).join('')
     const fin = advanceFinancials(order)
 
     const html = `<!doctype html><html lang="en" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" spellcheck="false"><head><title>Advance Receipt ${esc(order.deposit_id)}</title>
@@ -128,13 +150,13 @@ ${order.address ? `<div class="r"><span class="label">Address</span><span>${esc(
 <div class="r"><span class="label">Product</span><span>${esc(order.product_name)}</span></div>
 ${order.category ? `<div class="r"><span class="label">Category</span><span>${esc(order.category)}</span></div>` : ''}
 <div class="r"><span class="label">Delivery</span><span>${esc(new Date(`${order.expected_delivery_date}T00:00:00`).toLocaleDateString('en-IN'))}</span></div>
-<div class="r"><span class="label">Payment</span><span>${esc(depositPayment)}</span></div>
+${paymentRows}
 <div class="line"></div>
 <div class="r"><span>Subtotal</span><span>${esc(formatCurrency(fin.subtotal))}</span></div>
 <div class="r"><span>Delivery</span><span>${fin.delivery > 0 ? esc(formatCurrency(fin.delivery)) : 'Free'}</span></div>
-<div class="r"><span>Discount</span><span>${esc(formatCurrency(fin.discount))}</span></div>
-<div class="r"><span>CGST</span><span>${esc(formatCurrency(fin.cgst))}</span></div>
-<div class="r"><span>SGST</span><span>${esc(formatCurrency(fin.sgst))}</span></div>
+${fin.discount > 0 ? `<div class="r"><span>Discount</span><span>-${esc(formatCurrency(fin.discount))}</span></div>` : ''}
+${fin.cgst + fin.sgst > 0 ? `<div class="r"><span>CGST</span><span>${esc(formatCurrency(fin.cgst))}</span></div>
+<div class="r"><span>SGST</span><span>${esc(formatCurrency(fin.sgst))}</span></div>` : ''}
 <div class="r"><span class="bold">Total Amount</span><span class="bold">${esc(formatCurrency(fin.total))}</span></div>
 <div class="r"><span>Deposit Paid</span><span class="bold">${esc(formatCurrency(fin.deposit))}</span></div>
 ${fin.completed ? `<div class="r"><span>Balance Paid</span><span class="bold">${esc(formatCurrency(fin.balancePaid))}</span></div>` : ''}

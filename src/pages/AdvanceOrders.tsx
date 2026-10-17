@@ -112,7 +112,7 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
 
   const openDetails = async (order: AdvanceOrder) => {
     setSelected(order); setTimeline([]); setPayments([])
-    try { const history = await getAdvanceOrderHistory(order.id); setTimeline(history.timeline); setPayments(history.payments) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load order details') }
+    try { const history = await getAdvanceOrderHistory(order.id); setTimeline(history.timeline); setPayments(history.payments); setSelected(current => current && current.id === order.id ? { ...current, payments: history.payments } : current) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load order details') }
   }
 
   const analytics = useMemo(() => ({
@@ -198,8 +198,16 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
         remarksWithCoupon,
         paymentForm.method === 'split' ? splitInputToDetails(finalSplit) : undefined
       )
-      const completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: 0, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: paymentForm.method, split_details: result.split_details }
-      setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)); onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setFinalSplit(emptySplitInput()); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue.`)
+      let completed: AdvanceOrder = { ...paymentOrder, status: 'completed', remaining_balance: 0, completed_at: result.completed_at, completed_order_id: result.order_id, invoice_number: result.invoice_no, final_payment_method: paymentForm.method, split_details: result.split_details }
+      // Reload so the receipt/PDF data (payments, discount, GST) and an open drawer reflect the final payment immediately
+      try {
+        const fresh = await listAdvanceOrders()
+        const match = fresh.find(row => row.id === completed.id)
+        if (match) completed = { ...match, status: 'completed', remaining_balance: 0 }
+        setOrders(fresh.map(row => row.id === completed.id ? completed : row))
+      } catch { setOrders(rows => rows.map(row => row.id === completed.id ? completed : row)) }
+      if (selected?.id === completed.id) void openDetails(completed)
+      onOrderCompleted?.(completed); setPaymentOrder(null); setPaymentForm({ method: 'cash', remarks: '' }); setFinalSplit(emptySplitInput()); setNotice(`${result.invoice_no} generated once. The full ${formatCurrency(completed.total_amount)} is now recognized as revenue.`)
 
       // Redirect to WhatsApp with final invoice URL + Instagram + Feedback form
       whatsappInvoice(completed)
@@ -208,8 +216,8 @@ export default function AdvanceOrders({ onOrderCompleted }: AdvanceOrdersProps =
 
   const productRows = (order: AdvanceOrder) => order.products.length ? order.products : [{ name: order.product_name, quantity: 1, base_price: order.total_amount, line_total: order.total_amount, unit: 'piece', unit_type: 'unit' }]
   const advanceSettlement = (order: AdvanceOrder) => { const fin = advanceFinancials(order); return { depositPaid: fin.deposit, balancePaid: fin.balancePaid, remaining: fin.remaining } }
-  const invoiceFile = (order: AdvanceOrder) => invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, items: productRows(order), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) })
-  const printFinal = (order: AdvanceOrder) => printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: order.total_amount, shipping: 0, total: order.total_amount, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) })
+  const invoiceFile = (order: AdvanceOrder) => { const fin = advanceFinancials(order); return invoicePdfFile({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, address: order.address, items: productRows(order), subtotal: fin.subtotal, shipping: fin.delivery, manualDiscountAmount: fin.discount, gstAmount: fin.cgst + fin.sgst, total: fin.total, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) }) }
+  const printFinal = (order: AdvanceOrder) => { const fin = advanceFinancials(order); return printThermalReceipt({ invoiceNo: order.invoice_number || order.deposit_id, date: order.completed_at || new Date().toISOString(), customerName: order.customer_name, phone: order.phone, items: productRows(order).map(item => ({ name: String(item.name || 'Product'), qty: Number(item.quantity || 1), unit: String(item.unit || 'piece'), price: Number(item.base_price || 0), line_total: Number(item.line_total || 0) })), subtotal: fin.subtotal, shipping: fin.delivery, manualDiscount: fin.discount, totalGst: fin.cgst + fin.sgst, total: fin.total, paymentMode: advancePaymentText(order), advance: advanceSettlement(order) }) }
   const printOrder = (order: AdvanceOrder) => order.status === 'completed' ? printFinal(order) : printAdvanceReceipt(order)
   
   const whatsappDepositReceipt = (order: AdvanceOrder) => {

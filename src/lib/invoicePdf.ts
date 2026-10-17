@@ -4,6 +4,7 @@ import html2canvas from 'html2canvas'
 import { BRAND_ADDRESS, BRAND_EN, BRAND_PHONE_DISPLAY } from './brand'
 import { formatCurrency, formatQuantityDisplay, normalizeStructuredOrderItem, formatInvoiceNo } from './retail'
 import { LOGO_BASE64 } from './logoBase64'
+import { splitGst } from './payments'
 
 export type InvoicePdfData = {
   invoiceNo: string
@@ -141,7 +142,10 @@ export function createInvoicePdf(data: InvoicePdfData): Blob {
   const rows: Array<[string, string, string]> = [['Subtotal', money(data.subtotal), ink]]
   if ((data.discountAmount || 0) > 0) rows.push([`Coupon${data.couponCode ? ` (${data.couponCode})` : ''}`, `-${money(data.discountAmount || 0)}`, '#C9B79C'])
   if ((data.manualDiscountAmount || 0) > 0) rows.push(['Discount', `-${money(data.manualDiscountAmount || 0)}`, '#C9B79C'])
-  if ((data.gstAmount || 0) > 0) rows.push(['GST', money(data.gstAmount || 0), ink])
+  if ((data.gstAmount || 0) > 0) {
+    const { cgst, sgst } = splitGst(data.gstAmount || 0)
+    rows.push(['CGST', money(cgst), ink], ['SGST', money(sgst), ink])
+  }
   rows.push(['Delivery', (data.shipping || 0) > 0 ? money(data.shipping) : 'FREE', ink])
   doc.setFontSize(9)
   rows.forEach(([label, value, color]) => { doc.setFont('helvetica', 'normal'); doc.setTextColor(color); doc.text(label, 143, y, { align: 'right' }); doc.text(value, right - 4, y, { align: 'right' }); y += 7 })
@@ -212,7 +216,13 @@ export async function invoicePdfFileFromElement(
         clonedInvoice.style.maxWidth = `${canonicalWidth}px`
         clonedInvoice.style.minHeight = `${targetMinHeight}px`
         clonedInvoice.style.boxSizing = 'border-box'
-        clonedInvoice.style.margin = '0 auto'
+        clonedInvoice.style.margin = '0'
+        // The on-screen card chrome (rounded border, shadow, clipping) must not end up in the PDF
+        clonedInvoice.style.border = 'none'
+        clonedInvoice.style.borderRadius = '0'
+        clonedInvoice.style.boxShadow = 'none'
+        clonedInvoice.style.overflow = 'visible'
+        clonedInvoice.style.padding = '36px 32px'
       },
     })
 
@@ -222,8 +232,11 @@ export async function invoicePdfFileFromElement(
     const imageHeight = (canvas.height * pageWidth) / canvas.width
     const image = canvas.toDataURL('image/png')
 
-    if (imageHeight <= pageHeight + 5) {
-      doc.addImage(image, 'PNG', 0, 0, pageWidth, pageHeight, undefined, 'FAST')
+    if (imageHeight <= pageHeight * 1.2) {
+      // Fit on one page without stretching: shrink proportionally and centre horizontally
+      const fit = Math.min(1, pageHeight / imageHeight)
+      const drawWidth = pageWidth * fit
+      doc.addImage(image, 'PNG', (pageWidth - drawWidth) / 2, 0, drawWidth, imageHeight * fit, undefined, 'FAST')
     } else {
       let offset = 0
       let page = 0

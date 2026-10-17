@@ -72,3 +72,10 @@ export function formatPaymentLabel(mode: unknown, splitRaw?: unknown): string {
   const raw = String(mode || '').trim()
   return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : ''
 }
+
+/** Splits a total GST amount into equal CGST + SGST halves (paise-safe: SGST takes the remainder). */
+export function splitGst(totalGst: number): { cgst: number; sgst: number } {
+  const total = round2(Math.max(0, Number(totalGst) || 0))
+  const cgst = round2(total / 2)
+  return { cgst, sgst: round2(total - cgst) }
+}

@@ -21,7 +21,7 @@ import { uploadInvoicePdf } from '../lib/storage'
 import { createOrderWithStock } from '../services/orderService'
 import { createAdvanceOrder, type AdvanceOrder, type AdvancePaymentMethod } from '../services/advanceOrderService'
 import SplitPaymentInputs from '../components/common/SplitPaymentInputs'
-import { emptySplitInput, formatPaymentLabel, splitInputToDetails, splitTotal, type SplitInputValue } from '../lib/payments'
+import { emptySplitInput, formatPaymentLabel, splitGst, splitInputToDetails, splitTotal, type SplitInputValue } from '../lib/payments'
 import { printAdvanceReceipt } from '../lib/advanceReceipt'
 import { printThermalReceipt } from '../lib/thermalPrint'
 import {
@@ -1610,10 +1610,16 @@ export default function Pos(props: PosProps = {}) {
                 </div>
 
                 {billGstEnabled && totalGst > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black text-[#374151]">GST Amount</span>
-                    <span className="text-[12px] font-black text-[#111111]">{formatCurrency(totalGst)}</span>
-                  </div>
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black text-[#374151]">CGST</span>
+                      <span className="text-[12px] font-black text-[#111111]">{formatCurrency(splitGst(totalGst).cgst)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black text-[#374151]">SGST</span>
+                      <span className="text-[12px] font-black text-[#111111]">{formatCurrency(splitGst(totalGst).sgst)}</span>
+                    </div>
+                  </>
                 )}
 
                 <div className="flex items-center justify-between">

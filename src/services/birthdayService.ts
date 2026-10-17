@@ -109,7 +109,13 @@ export const birthdayInWindow = (iso: string, from: string, to: string) =>
 export const rangeToDates = (range: BirthdayRange, today = new Date()): { from: string; to: string } => {
   switch (range) {
     case 'today': return { from: toMonthDay(today), to: toMonthDay(today) }
-    case 'week': return { from: toMonthDay(today), to: toMonthDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 6)) }
+    case 'week': {
+      // Monday → Sunday of the current week
+      const sinceMonday = (today.getDay() + 6) % 7
+      const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - sinceMonday)
+      const sunday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - sinceMonday + 6)
+      return { from: toMonthDay(monday), to: toMonthDay(sunday) }
+    }
     case 'month': {
       const last = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
       return { from: `${pad(today.getMonth() + 1)}-01`, to: `${pad(today.getMonth() + 1)}-${pad(last)}` }

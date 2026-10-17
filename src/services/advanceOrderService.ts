@@ -30,6 +30,10 @@ export type AdvanceOrder = {
   final_payment_method: string | null
   /** Full cash / QR / card amounts collected for this order (deposit + final payment). */
   split_details?: SplitDetails
+  /** Final-invoice figures (discount / delivery / GST) copied from the generated sale order, when completed. */
+  breakdown?: { discount: number; delivery: number; gst: number }
+  /** Deposit + final payments, used by receipts to show how each part was paid. */
+  payments?: AdvancePayment[]
 }
 
 export type AdvanceTimeline = { id: number; advance_order_id: string; event_type: string; label: string; remarks: string; created_at: string }
@@ -111,6 +115,42 @@ const normalizeOrder = (row: Record<string, unknown>): AdvanceOrder => ({
   final_payment_method: row.final_payment_method ? String(row.final_payment_method) : null,
 })
 
+/** Attaches payment rows and (for completed orders) the final invoice figures so receipts / PDFs show the full picture. */
+async function enrichOrders(orders: AdvanceOrder[]): Promise<AdvanceOrder[]> {
+  if (!isSupabaseConfigured || orders.length === 0) {
+    const localPayments = loadLocalPayments()
+    return orders.map(o => ({ ...o, payments: o.payments || localPayments.filter(p => p.advance_order_id === o.id) }))
+  }
+  const paymentsByOrder = new Map<string, AdvancePayment[]>()
+  const breakdownByOrder = new Map<string, NonNullable<AdvanceOrder['breakdown']>>()
+  try {
+    const ids = orders.map(o => o.id)
+    const completedIds = orders.map(o => o.completed_order_id).filter((id): id is string => Boolean(id))
+    const [payRes, ordRes] = await Promise.all([
+      supabase.from('advance_order_payments').select('*').in('advance_order_id', ids).order('received_at'),
+      completedIds.length
+        ? supabase.from('orders').select('id, total_gst, gst_amount, discount_amount, delivery_charge, shipping').in('id', completedIds)
+        : Promise.resolve({ data: [] as Array<Record<string, unknown>>, error: null }),
+    ])
+    for (const row of (payRes.data || []) as AdvancePayment[]) {
+      paymentsByOrder.set(row.advance_order_id, [...(paymentsByOrder.get(row.advance_order_id) || []), row])
+    }
+    for (const row of (ordRes.data || []) as Array<Record<string, unknown>>) {
+      breakdownByOrder.set(String(row.id), {
+        discount: Number(row.discount_amount || 0),
+        delivery: Number(row.delivery_charge || row.shipping || 0),
+        gst: Number(row.total_gst || row.gst_amount || 0),
+      })
+    }
+  } catch (err) { console.warn('[enrichOrders] optional receipt details unavailable:', err) }
+  const localPayments = loadLocalPayments()
+  return orders.map(o => ({
+    ...o,
+    payments: paymentsByOrder.get(o.id) || localPayments.filter(p => p.advance_order_id === o.id),
+    breakdown: o.completed_order_id ? breakdownByOrder.get(o.completed_order_id) || o.breakdown : o.breakdown,
+  }))
+}
+
 const rpcRow = (data: unknown) => (Array.isArray(data) ? data[0] : data) as Record<string, unknown>
 
 export async function deleteAdvanceOrder(orderId: string): Promise<void> {
@@ -143,11 +183,11 @@ export async function listAdvanceOrders(): Promise<AdvanceOrder[]> {
         const localOnly = local.filter(l => !remoteIds.has(l.id))
         const merged = [...remote, ...localOnly].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         saveLocalOrders(merged)
-        return merged
+        return await enrichOrders(merged)
       }
     } catch (err) { console.error('[listAdvanceOrders] Exception:', err) }
   }
-  return local
+  return enrichOrders(local)
 }
 
 export async function getAdvanceOrderHistory(orderId: string) {

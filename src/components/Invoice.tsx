@@ -2,6 +2,7 @@ import React from 'react'
 import { BRAND_ADDRESS, BRAND_EMAIL, BRAND_EN, BRAND_INSTAGRAM, BRAND_PRIMARY_PHONE_DISPLAY, BRAND_ICON } from '../lib/brand'
 import { formatCurrency, formatQuantityDisplay, normalizeStructuredOrderItem, formatInvoiceNo } from '../lib/retail'
 import { formatPhoneDisplay } from '../lib/phone'
+import { splitGst } from '../lib/payments'
 
 export interface InvoiceItem {
   id: string | number
@@ -67,6 +68,7 @@ export const Invoice: React.FC<InvoiceProps> = ({
 
   const statusColor = status === 'completed' ? '#C9B79C' : status === 'cancelled' ? '#dc2626' : '#d97706'
   const effectiveDelivery = deliveryCharge || shipping
+  const { cgst, sgst } = splitGst(gstAmount)
 
   return (
     <div
@@ -199,10 +201,16 @@ export const Invoice: React.FC<InvoiceProps> = ({
               </div>
             )}
             {gstAmount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ fontSize: 12, color: '#666' }}>GST</span>
-                <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(gstAmount)}</span>
-              </div>
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: '#666' }}>CGST</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(cgst)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: '#666' }}>SGST</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>+{formatCurrency(sgst)}</span>
+                </div>
+              </>
             )}
             {effectiveDelivery > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
