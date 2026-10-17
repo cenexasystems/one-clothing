@@ -682,14 +682,15 @@ export default function Pos(props: PosProps = {}) {
     if (depositForm.paymentMethod === 'split' && Math.abs(splitTotal(splitInputToDetails(depositSplit)) - depositAmount) >= 0.01) { setError(`Split amounts must add up to the deposit of ${formatCurrency(depositAmount)}.`); return }
     setSaving(true); setError('')
     try {
-      const allocationBase = items.reduce((sum, item) => sum + item.lineTotal, 0)
-      let allocated = 0
+      // Keep true item prices; the cart's coupon / discount / GST / delivery travel with the order as `advance_pricing`
+      const advancePricing = {
+        subtotal, coupon_code: isValidCoupon ? appliedCoupon?.code || null : null, coupon_discount: couponDiscount,
+        manual_discount: manualDiscountAmount, gst: totalGst, delivery: Number(shipping || 0) || 0, total,
+      }
       const productsSnapshot = items.map((item, index) => {
-        const lineTotal = index === items.length - 1
-          ? Math.max(0, Math.round((total - allocated) * 100) / 100)
-          : Math.max(0, Math.round((allocationBase > 0 ? total * item.lineTotal / allocationBase : total / items.length) * 100) / 100)
-        allocated += lineTotal
+        const lineTotal = Math.max(0, Math.round(item.lineTotal * 100) / 100)
         return {
+          ...(index === 0 ? { advance_pricing: advancePricing } : {}),
           product_id: item.parentProductId || toProductId(item.id), variant_id: item.variantId || null,
           variant_name: item.variantName || null, name: item.name, category: item.category,
           description: item.note || '', quantity: item.qty, unit: item.selectedUnit, unit_type: item.unitType,

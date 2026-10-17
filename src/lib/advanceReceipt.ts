@@ -3,7 +3,7 @@ import { BRAND_ADDRESS, BRAND_PHONE_DISPLAY, BRAND_PRIMARY_PHONE_DISPLAY } from 
 import { LOGO_BASE64 } from './logoBase64'
 import { formatCurrency } from './retail'
 import { formatPaymentLabel, normalizePaymentMode, round2, splitGst } from './payments'
-import type { AdvanceOrder, AdvancePayment } from '../services/advanceOrderService'
+import { getAdvancePricing, type AdvanceOrder, type AdvancePayment } from '../services/advanceOrderService'
 import { formatPhoneDisplay } from './phone'
 import { printHtmlDocument } from './printHtml'
 
@@ -20,21 +20,26 @@ const pdfMoney = (value: number): string => {
 
 export type AdvanceFinancials = {
   subtotal: number; delivery: number; discount: number; cgst: number; sgst: number
+  couponCode: string | null; couponDiscount: number; manualDiscount: number
   total: number; deposit: number; balancePaid: number; remaining: number; settled: boolean; completed: boolean
 }
 
 /** Single source for the financial breakdown shown in the drawer, receipt and PDF. */
 export function advanceFinancials(order: AdvanceOrder): AdvanceFinancials {
   const completed = order.status === 'completed' || Boolean(order.invoice_number)
-  const subtotal = order.total_amount
-  const discount = completed ? round2(order.breakdown?.discount || 0) : 0
-  const delivery = completed ? round2(order.breakdown?.delivery || 0) : 0
-  const gst = completed ? round2(order.breakdown?.gst || 0) : 0
+  const pricing = getAdvancePricing(order)
+  const couponDiscount = round2(pricing ? pricing.coupon_discount : 0)
+  const manualDiscount = round2(pricing ? pricing.manual_discount : completed ? order.breakdown?.discount || 0 : 0)
+  const discount = round2(couponDiscount + manualDiscount)
+  const subtotal = pricing ? pricing.subtotal : order.total_amount
+  const delivery = round2(pricing ? pricing.delivery : completed ? order.breakdown?.delivery || 0 : 0)
+  const gst = round2(pricing ? pricing.gst : completed ? order.breakdown?.gst || 0 : 0)
   const { cgst, sgst } = splitGst(gst)
-  const total = completed ? Math.max(0, round2(subtotal - discount + delivery + gst)) : subtotal
+  // With captured POS pricing the stored order amount is already the net payable total
+  const total = pricing ? order.total_amount : completed ? Math.max(0, round2(subtotal - discount + delivery + gst)) : subtotal
   const balancePaid = completed ? Math.max(0, round2(total - order.deposit_amount)) : 0
   const remaining = completed ? 0 : Math.max(0, order.remaining_balance)
-  return { subtotal, delivery, discount, cgst, sgst, total, deposit: order.deposit_amount, balancePaid, remaining, settled: remaining < 0.005, completed }
+  return { subtotal, delivery, discount, cgst, sgst, couponCode: pricing?.coupon_code || null, couponDiscount, manualDiscount, total, deposit: order.deposit_amount, balancePaid, remaining, settled: remaining < 0.005, completed }
 }
 
 const paymentLine = (payment: AdvancePayment) => {
@@ -75,7 +80,7 @@ export function advanceReceiptPdf(order: AdvanceOrder) {
   rows.forEach(([label, value]) => { doc.setFont('helvetica', 'bold'); doc.setTextColor('#6B7280'); doc.text(label.toUpperCase(), 16, y); doc.setFont('helvetica', 'normal'); doc.setTextColor('#1F1F1F'); doc.text(String(value), 64, y, { maxWidth: 126 }); y += 10 })
   const fin = advanceFinancials(order)
   const money: Array<readonly [string, number, boolean]> = [
-    ['Subtotal', fin.subtotal, false], ['Delivery charges', fin.delivery, false], ['Discount', -fin.discount, false],
+    ['Subtotal', fin.subtotal, false], ['Delivery charges', fin.delivery, false], [fin.couponCode ? `Coupon (${fin.couponCode})` : 'Discount', -fin.discount, false],
     ['CGST', fin.cgst, false], ['SGST', fin.sgst, false], ['Total order amount', fin.total, true],
     ['Deposit paid', fin.deposit, false], ...(fin.completed ? [['Final balance paid', fin.balancePaid, false] as const] : []),
     ['Remaining balance', fin.remaining, true],
@@ -154,7 +159,7 @@ ${paymentRows}
 <div class="line"></div>
 <div class="r"><span>Subtotal</span><span>${esc(formatCurrency(fin.subtotal))}</span></div>
 <div class="r"><span>Delivery</span><span>${fin.delivery > 0 ? esc(formatCurrency(fin.delivery)) : 'Free'}</span></div>
-${fin.discount > 0 ? `<div class="r"><span>Discount</span><span>-${esc(formatCurrency(fin.discount))}</span></div>` : ''}
+${fin.discount > 0 ? `<div class="r"><span>${esc(fin.couponCode ? `Coupon (${fin.couponCode})` : 'Discount')}</span><span>-${esc(formatCurrency(fin.discount))}</span></div>` : ''}
 ${fin.cgst + fin.sgst > 0 ? `<div class="r"><span>CGST</span><span>${esc(formatCurrency(fin.cgst))}</span></div>
 <div class="r"><span>SGST</span><span>${esc(formatCurrency(fin.sgst))}</span></div>` : ''}
 <div class="r"><span class="bold">Total Amount</span><span class="bold">${esc(formatCurrency(fin.total))}</span></div>

@@ -36,6 +36,16 @@ export type AdvanceOrder = {
   payments?: AdvancePayment[]
 }
 
+/** Cart pricing captured when the advance order was created in the POS (coupon, discounts, GST, delivery). */
+export type AdvancePricing = { subtotal: number; coupon_code: string | null; coupon_discount: number; manual_discount: number; gst: number; delivery: number; total: number }
+
+export function getAdvancePricing(order: Pick<AdvanceOrder, 'products'>): AdvancePricing | null {
+  const raw = order.products.find(p => p && typeof p === 'object' && 'advance_pricing' in p)?.advance_pricing as Record<string, unknown> | undefined
+  if (!raw) return null
+  const n = (v: unknown) => Number(v) || 0
+  return { subtotal: n(raw.subtotal), coupon_code: raw.coupon_code ? String(raw.coupon_code) : null, coupon_discount: n(raw.coupon_discount), manual_discount: n(raw.manual_discount), gst: n(raw.gst), delivery: n(raw.delivery), total: n(raw.total) }
+}
+
 export type AdvanceTimeline = { id: number; advance_order_id: string; event_type: string; label: string; remarks: string; created_at: string }
 export type AdvancePayment = { id: string; advance_order_id: string; payment_type: 'deposit' | 'remaining'; amount: number; payment_method: string; split_details?: unknown; remarks: string; received_at: string }
 
@@ -401,6 +411,17 @@ export async function completeAdvanceOrder(
       if (data) {
         const row = Array.isArray(data) ? data[0] : data
         result = row as { order_id: string; invoice_no: string; completed_at: string }
+        // The RPC knows nothing about the POS cart's coupon / GST / delivery: copy them onto the sale order
+        try {
+          const pricing = getAdvancePricing(loadLocalOrders().find(o => o.id === orderId) || { products: [] })
+          if (pricing) {
+            await supabase.from('orders').update({
+              subtotal: pricing.subtotal, discount_amount: pricing.coupon_discount, manual_discount_amount: pricing.manual_discount,
+              coupon_code: pricing.coupon_code, delivery_charge: pricing.delivery, shipping: pricing.delivery,
+              total_gst: pricing.gst, gst_amount: pricing.gst,
+            }).eq('id', result.order_id)
+          }
+        } catch (err) { console.warn('[completeAdvanceOrder] could not copy pricing to the sale order:', err) }
         // Full collection breakdown (deposit + final) written by the database for analytics
         try {
           const { data: orderRow } = await supabase.from('orders').select('split_details').eq('id', result.order_id).maybeSingle()
